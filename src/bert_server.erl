@@ -147,9 +147,10 @@ code_change(_OldVsn, State, _Extra) ->
 process({Mod,Fun,Args},Socket)->
     try erlang:apply(Mod,Fun,Args) of
 	Result->
-	    gen_tcp:send(Socket,bert:encode(Result))
+	    gen_tcp:send(Socket,bert:encode({reply,Result}))
     catch
-	error:_Error->
+	error:Error->
+	    error_logger:info("error ~p~n",[Error]),
 	    Data=term_to_binary({error,[]}),
 	    gen_tcp:send(Socket,Data)	 
     end.
