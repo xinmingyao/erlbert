@@ -1,17 +1,17 @@
 %%%-------------------------------------------------------------------
-%%% @author  <>
+%%% @author  <yaoxinming@gmail.com>
 %%% @copyright (C) 2012, 
 %%% @doc
 %%%
 %%% @end
-%%% Created : 22 May 2012 by  <>
+%%% Created :  8 Jun 2012 by  <>
 %%%-------------------------------------------------------------------
--module(bert_server).
-
+-module(bert_js).
+ 
 -behaviour(gen_server).
 
 %% API
--export([start_link/4]).
+-export([start_link/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -19,12 +19,16 @@
 
 -define(SERVER, ?MODULE). 
 
--record(state, {socket}).
+-record(state, {port}).
+
+-export([call/2]).
+
 
 %%%===================================================================
 %%% API
 %%%===================================================================
-
+call(F,A)->
+    gen_server:call(?SERVER,{call,F,A}).
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the server
@@ -32,8 +36,8 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link (_ListenPid,Socket,Transport,TransOps) ->
-    gen_server:start_link( ?MODULE, [Socket,Transport,TransOps], []).
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -50,9 +54,12 @@ start_link (_ListenPid,Socket,Transport,TransOps) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([Socket,_,_]) ->
-    inet:setopts(Socket,[binary,{packet,4},{active,once}]),
-    {ok, #state{socket=Socket}}.
+init([]) ->
+    {ok,Port}=js_driver:new(8,8),
+
+    Js=filelib:wildcard(code:lib_dir(erlbert,js)++"/*.js"),
+    lists:map(fun (A) -> js_driver:define_js(Port,{file,A})  end,Js),
+    {ok, #state{port=Port}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -68,8 +75,8 @@ init([Socket,_,_]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call(_Request, _From, State) ->
-    Reply = ok,
+handle_call({call,F,A}, _From, State=#state{port=Port}) ->
+    Reply = js:call(Port,list_to_binary(atom_to_list(F)),A),
     {reply, Reply, State}.
 
 %%--------------------------------------------------------------------
@@ -95,22 +102,6 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({tcp,Socket,Bin},State)->
-    Term=binary_to_term(Bin),
-    case Term of
-	_Req->
-	    {Type,Mod,Fun,Arg}=bert:decode(Bin),
-	    case Type of
-		call when Mod=:= bert_js->
-		    process_js({Mod,Fun,Arg},Socket);
-		call ->
-		    process({Mod,Fun,Arg},Socket)
-	    end
-    end,
-     inet:setopts(Socket,[{active,once}]),
-    {noreply, State}
-;
-%%todo tcp_clode handle		    
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -142,29 +133,3 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-
-
-
-process({Mod,Fun,Args},Socket)->
-    try erlang:apply(Mod,Fun,Args) of
-	Result->
-	    gen_tcp:send(Socket,bert:encode({reply,Result}))
-    catch
-	error:Error->
-	    error_logger:info("error ~p~n",[Error]),
-	    Data=term_to_binary({error,[]}),
-	    gen_tcp:send(Socket,Data)	 
-    end.
-
-
-
-process_js({_Mod,Fun,Args},Socket)->
-    case  bert_js:call(Fun,Args) of
-	{ok,Result}->
-	    gen_tcp:send(Socket,bert:encode({reply,Result}));
-	{error,Error}->
-	    error_logger:info("error ~p~n",[Error]),
-	    Data=term_to_binary({error,[]}),
-	    gen_tcp:send(Socket,Data)	 
-    end.
